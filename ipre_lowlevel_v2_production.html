@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPRE — Production Architecture (Review-Proof)</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background:#f0f4f8;
+  font-family:'Inter',sans-serif;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  padding:40px 20px 60px;
+}
+
+/* ── PAGE HEADER ── */
+.page-header { text-align:center; margin-bottom:32px; }
+.page-header h1 { font-size:26px; font-weight:700; color:#1a2b45; margin-bottom:6px; letter-spacing:-0.5px; }
+.page-header p  { font-size:13px; color:#6b7c99; font-family:'JetBrains Mono',monospace; letter-spacing:0.5px; }
+.page-header .review-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  background:#e8f5e9; border:1px solid #a5d6a7; border-radius:20px;
+  padding:4px 14px; font-size:11px; font-weight:600; color:#2e7d32;
+  margin-top:10px;
+}
+
+/* ── MAIN CANVAS ── */
+.canvas {
+  background:#fff;
+  border:1px solid #dde3ed;
+  border-radius:20px;
+  padding:36px 36px 44px;
+  width:100%;
+  max-width:1480px;
+  box-shadow:0 4px 32px rgba(0,0,0,0.08),0 1px 3px rgba(0,0,0,0.04);
+  position:relative;
+}
+.canvas::before {
+  content:'';
+  position:absolute; inset:0; border-radius:20px;
+  background-image:
+    linear-gradient(rgba(100,130,180,0.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(100,130,180,0.05) 1px,transparent 1px);
+  background-size:28px 28px;
+  pointer-events:none;
+}
+
+/* ════════════════════════════════════════
+   PLANE LABELS
+════════════════════════════════════════ */
+.plane-header {
+  display:flex; align-items:center; gap:10px;
+  margin-bottom:14px;
+}
+.plane-pill {
+  display:inline-flex; align-items:center; gap:7px;
+  padding:5px 14px; border-radius:20px;
+  font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase;
+}
+.plane-pill.offline {
+  background:rgba(0,137,123,0.08); border:1.5px solid rgba(0,137,123,0.3); color:#00695c;
+}
+.plane-pill.online {
+  background:rgba(26,107,255,0.08); border:1.5px solid rgba(26,107,255,0.3); color:#1a4dbf;
+}
+.plane-desc {
+  font-size:11px; color:#94a8c7; font-family:'JetBrains Mono',monospace; letter-spacing:0.3px;
+}
+
+/* divider between planes */
+.plane-divider {
+  display:flex; align-items:center; gap:16px;
+  margin:16px 0;
+  position:relative; z-index:1;
+}
+.plane-divider::before, .plane-divider::after {
+  content:''; flex:1; height:1.5px;
+  background:repeating-linear-gradient(to right,#dde3ed 0,#dde3ed 8px,transparent 8px,transparent 16px);
+}
+.plane-divider-badge {
+  background:#fff; border:1.5px solid #dde3ed; border-radius:20px;
+  padding:5px 16px; font-size:10px; font-weight:700;
+  color:#94a8c7; letter-spacing:1.5px; text-transform:uppercase;
+  white-space:nowrap; flex-shrink:0;
+  display:flex; align-items:center; gap:6px;
+}
+
+/* ════════════════════════════════════════
+   LAYOUT ROWS
+════════════════════════════════════════ */
+.top-row {
+  display:flex; align-items:center; gap:0;
+  position:relative; z-index:1;
+  justify-content:flex-start;
+}
+
+.pipeline-area {
+  position:relative; z-index:1; margin-top:0;
+}
+
+.step-row {
+  display:grid;
+  grid-template-columns: 280px 48px 380px 48px 260px;
+  align-items:center;
+  position:relative; z-index:1;
+  min-height:120px;
+}
+
+.col-left    { display:flex; justify-content:flex-end; align-items:center; gap:8px; }
+.col-arr     { display:flex; justify-content:center; align-items:center; }
+.col-centre  { display:flex; justify-content:center; align-items:stretch; }
+.col-arr2    { display:flex; justify-content:center; align-items:center; }
+.col-right   { display:flex; justify-content:flex-start; align-items:center; gap:8px; }
+
+/* ════════════════════════════════════════
+   ICON BOXES
+════════════════════════════════════════ */
+.icon-box {
+  border-radius:16px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 4px 16px rgba(0,0,0,0.12),0 1px 4px rgba(0,0,0,0.08);
+  transition:transform 0.15s,box-shadow 0.15s;
+  cursor:default; flex-shrink:0;
+}
+.icon-box:hover { transform:translateY(-3px); box-shadow:0 8px 28px rgba(0,0,0,0.16); }
+.icon-box.sz72  { width:72px; height:72px; }
+.icon-box.sz80  { width:80px; height:80px; border-radius:18px; }
+
+.box-sf      { background:linear-gradient(135deg,#00a1e0,#0070c0); }
+.box-appflow { background:linear-gradient(135deg,#e91e8c,#c0175a); }
+.box-s3lake  { background:linear-gradient(135deg,#2e7d32,#1b5e20); }   /* darker green = system of record */
+.box-s3int   { background:linear-gradient(135deg,#f4a200,#c47d00); }
+.box-proc    { background:linear-gradient(135deg,#00897b,#006b5e); }
+.box-train   { background:linear-gradient(135deg,#5c6bc0,#3949ab); }
+.box-lambda  { background:linear-gradient(135deg,#ff9800,#e65100); }
+.box-apigw   { background:linear-gradient(135deg,#e91e8c,#ad1457); }
+.box-cw      { background:linear-gradient(135deg,#e53935,#b71c1c); }
+.box-serving { background:linear-gradient(135deg,#0288d1,#01579b); }  /* distinct blue for serving store */
+.box-eb      { background:linear-gradient(135deg,#e91e8c,#c0175a); }
+
+/* ── NODE ── */
+.node {
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+  position:relative; cursor:default; flex-shrink:0;
+}
+.node-label    { font-size:11.5px; font-weight:600; color:#1a2b45; text-align:center; line-height:1.3; max-width:110px; }
+.node-sublabel { font-size:9.5px; color:#6b7c99; font-family:'JetBrains Mono',monospace; text-align:center; margin-top:-4px; }
+
+/* ── TOOLTIP ── */
+.tip {
+  position:absolute; bottom:calc(100% + 12px); left:50%; transform:translateX(-50%);
+  background:#1a2b45; color:#e8f0fe; font-size:10px; font-family:'JetBrains Mono',monospace;
+  padding:8px 12px; border-radius:8px; white-space:nowrap;
+  opacity:0; pointer-events:none; transition:opacity 0.15s; z-index:300;
+  line-height:1.6; box-shadow:0 4px 16px rgba(0,0,0,0.2);
+}
+.tip::after {
+  content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+  border:5px solid transparent; border-top-color:#1a2b45;
+}
+.node:hover .tip { opacity:1; }
+
+/* ── ARROWS ── */
+.arrow-h {
+  height:2px; background:#94a8c7; position:relative; flex-shrink:0;
+}
+.arrow-h::after {
+  content:''; position:absolute; right:-1px; top:50%; transform:translateY(-50%);
+  border-top:6px solid transparent; border-bottom:6px solid transparent; border-left:9px solid #94a8c7;
+}
+.arrow-h.both::before {
+  content:''; position:absolute; left:-1px; top:50%; transform:translateY(-50%);
+  border-top:6px solid transparent; border-bottom:6px solid transparent; border-right:9px solid #94a8c7;
+}
+.arrow-h.deploy {
+  background:#1a6bff; height:2.5px;
+}
+.arrow-h.deploy::after { border-left-color:#1a6bff; }
+
+.arrow-v { width:2px; background:#94a8c7; position:relative; flex-shrink:0; }
+.arrow-v.down::after {
+  content:''; position:absolute; bottom:-1px; left:50%; transform:translateX(-50%);
+  border-left:6px solid transparent; border-right:6px solid transparent; border-top:9px solid #94a8c7;
+}
+.arrow-v.deploy { background:#1a6bff; width:2.5px; }
+.arrow-v.deploy.down::after { border-top-color:#1a6bff; }
+
+/* ── STEP CARD ── */
+.step-card {
+  background:#fff;
+  border:1.5px solid #dde3ed;
+  border-radius:16px;
+  padding:15px 16px;
+  width:380px;
+  box-shadow:0 2px 12px rgba(0,0,0,0.06);
+  transition:box-shadow 0.2s,transform 0.2s;
+  position:relative;
+}
+.step-card:hover { box-shadow:0 6px 24px rgba(0,0,0,0.1); transform:translateY(-2px); }
+
+.step-card-header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.step-num {
+  width:28px; height:28px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px; font-weight:700; color:#fff; flex-shrink:0;
+}
+.step-info { flex:1; }
+.step-title  { font-size:13px; font-weight:700; color:#1a2b45; line-height:1.2; }
+.step-script { font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#6b7c99; margin-top:2px; }
+.step-badge  {
+  font-family:'JetBrains Mono',monospace; font-size:8.5px;
+  padding:3px 8px; border-radius:4px; white-space:nowrap; letter-spacing:0.3px;
+}
+.badge-proc  { background:rgba(0,137,123,0.1); color:#00695c; border:1px solid rgba(0,137,123,0.25); }
+.badge-train { background:rgba(92,107,192,0.1); color:#3949ab; border:1px solid rgba(92,107,192,0.25); }
+.badge-ep    { background:rgba(2,136,209,0.1);  color:#01579b; border:1px solid rgba(2,136,209,0.25); }
+
+.step-ops {
+  display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:8px;
+}
+.step-ops.one { grid-template-columns:1fr; }
+.op-chip {
+  background:#f7f9fc; border:1px solid #e4eaf3; border-radius:7px;
+  padding:5px 8px; font-family:'JetBrains Mono',monospace; font-size:8.5px;
+  color:#3a4d6b; line-height:1.45;
+}
+.op-chip strong { display:block; font-size:8px; text-transform:uppercase; letter-spacing:0.8px; color:#94a8c7; margin-bottom:2px; }
+
+.step-instance {
+  position:absolute; top:10px; right:12px;
+  font-family:'JetBrains Mono',monospace; font-size:8.5px; color:#94a8c7; letter-spacing:0.3px;
+}
+.accent { position:absolute; left:0; top:10px; bottom:10px; width:4px; border-radius:4px; }
+
+/* ── ARTIFACT ── */
+.artifact {
+  background:#fff; border:1.5px solid #dde3ed; border-radius:12px;
+  padding:9px 12px; display:flex; flex-direction:column; gap:3px;
+  min-width:130px; max-width:175px;
+  box-shadow:0 1px 6px rgba(0,0,0,0.05); transition:box-shadow 0.15s;
+}
+.artifact:hover { box-shadow:0 3px 14px rgba(0,0,0,0.1); }
+.artifact-header { display:flex; align-items:center; gap:7px; }
+.artifact-icon   { font-size:14px; flex-shrink:0; }
+.artifact-name   { font-family:'JetBrains Mono',monospace; font-size:9.5px; font-weight:600; color:#1a2b45; }
+.artifact-tag    { font-family:'JetBrains Mono',monospace; font-size:8px; padding:2px 6px; border-radius:3px; display:inline-block; margin-top:1px; }
+.tag-raw         { background:rgba(46,125,50,0.1);  color:#2e7d32; }
+.tag-int         { background:rgba(244,162,0,0.12); color:#c47d00; }
+.tag-final       { background:rgba(63,186,95,0.12); color:#2a8f45; }
+.tag-store       { background:rgba(2,136,209,0.12); color:#01579b; }
+.artifact-cols   { margin-top:4px; display:flex; flex-direction:column; gap:2px; }
+.artifact-col-item {
+  font-family:'JetBrains Mono',monospace; font-size:8px; color:#6b7c99;
+  display:flex; align-items:center; gap:4px;
+}
+.artifact-col-item::before { content:'·'; color:#b0bfd4; }
+
+/* ── STEP CONNECTOR ── */
+.step-connector { display:flex; justify-content:center; padding:3px 0; position:relative; z-index:1; }
+.step-connector-inner { display:flex; flex-direction:column; align-items:center; gap:0; }
+.connector-label {
+  font-family:'JetBrains Mono',monospace; font-size:9px; color:#94a8c7;
+  letter-spacing:0.5px; margin:2px 0; white-space:nowrap;
+}
+
+/* ════════════════════════════════════════
+   DEPLOY BRIDGE (between planes)
+════════════════════════════════════════ */
+.deploy-bridge {
+  display:flex; align-items:center; justify-content:center;
+  gap:16px; margin:8px 0; position:relative; z-index:1;
+}
+.deploy-arrow-box {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+}
+.deploy-badge {
+  background:rgba(26,107,255,0.08); border:1.5px solid rgba(26,107,255,0.3);
+  border-radius:10px; padding:8px 18px;
+  font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:600;
+  color:#1a4dbf; letter-spacing:0.5px; text-align:center; line-height:1.5;
+}
+.deploy-note {
+  font-family:'JetBrains Mono',monospace; font-size:8.5px; color:#94a8c7;
+  text-align:center; line-height:1.4;
+}
+
+/* ════════════════════════════════════════
+   ONLINE SERVING PLANE
+════════════════════════════════════════ */
+.serving-row {
+  display:flex; align-items:flex-start; gap:0;
+  position:relative; z-index:1;
+}
+
+/* Serving store card (replaces generic endpoint box) */
+.serving-store {
+  background:#fff;
+  border:2px solid rgba(2,136,209,0.35);
+  border-radius:16px;
+  padding:16px;
+  width:280px;
+  box-shadow:0 2px 16px rgba(2,136,209,0.1);
+  position:relative;
+  transition:box-shadow 0.2s;
+}
+.serving-store:hover { box-shadow:0 6px 28px rgba(2,136,209,0.18); }
+
+.serving-store-title {
+  font-size:13px; font-weight:700; color:#01579b; margin-bottom:4px;
+  display:flex; align-items:center; gap:8px;
+}
+.serving-store-sub {
+  font-family:'JetBrains Mono',monospace; font-size:9px; color:#6b7c99; margin-bottom:10px;
+}
+.serving-ops { display:flex; flex-direction:column; gap:4px; }
+.serving-op {
+  background:#e3f2fd; border:1px solid #90caf9; border-radius:6px;
+  padding:5px 8px; font-family:'JetBrains Mono',monospace; font-size:8.5px; color:#01579b; line-height:1.4;
+}
+.serving-op strong { color:#0277bd; }
+
+/* Lambda as Application Service */
+.app-service-card {
+  background:#fff;
+  border:2px solid rgba(255,152,0,0.4);
+  border-radius:16px;
+  padding:16px;
+  width:260px;
+  box-shadow:0 2px 16px rgba(255,152,0,0.08);
+  position:relative;
+  transition:box-shadow 0.2s;
+}
+.app-service-card:hover { box-shadow:0 6px 28px rgba(255,152,0,0.15); }
+.app-service-title {
+  font-size:13px; font-weight:700; color:#e65100; margin-bottom:4px;
+  display:flex; align-items:center; gap:8px;
+}
+.app-service-sub {
+  font-family:'JetBrains Mono',monospace; font-size:9px; color:#6b7c99; margin-bottom:10px;
+}
+.app-service-ops { display:flex; flex-direction:column; gap:4px; }
+.app-service-op {
+  background:#fff3e0; border:1px solid #ffcc80; border-radius:6px;
+  padding:5px 8px; font-family:'JetBrains Mono',monospace; font-size:8.5px; color:#bf360c; line-height:1.4;
+}
+.app-service-op strong { color:#e65100; }
+
+/* ════════════════════════════════════════
+   CLOUDWATCH OBSERVABILITY SIDEBAR
+════════════════════════════════════════ */
+.cw-panel {
+  background:#fff5f5;
+  border:1.5px solid rgba(229,57,53,0.3);
+  border-radius:16px;
+  padding:16px 18px;
+  position:absolute;
+  right:-260px;
+  top:0;
+  width:240px;
+  box-shadow:0 2px 16px rgba(229,57,53,0.08);
+}
+.cw-title {
+  display:flex; align-items:center; gap:8px;
+  font-size:12px; font-weight:700; color:#b71c1c; margin-bottom:12px;
+  padding-bottom:8px; border-bottom:1px solid rgba(229,57,53,0.15);
+}
+.cw-section { margin-bottom:12px; }
+.cw-section-label {
+  font-family:'JetBrains Mono',monospace; font-size:8.5px; font-weight:600;
+  letter-spacing:1.5px; text-transform:uppercase; color:#e53935; margin-bottom:5px;
+}
+.cw-metric {
+  display:flex; align-items:flex-start; gap:6px; margin-bottom:4px;
+  font-family:'JetBrains Mono',monospace; font-size:8.5px; color:#4d1414; line-height:1.4;
+}
+.cw-metric::before { content:'▸'; color:#ef9a9a; flex-shrink:0; margin-top:0px; }
+
+.cw-dotted-line {
+  position:absolute;
+  border-left:1.5px dashed rgba(229,57,53,0.3);
+  pointer-events:none;
+}
+
+/* Monitoring arrows from CW panel to components */
+.cw-connect {
+  display:flex; align-items:center; justify-content:flex-end;
+  gap:0; position:relative;
+}
+.cw-line {
+  height:1.5px;
+  background:repeating-linear-gradient(to right, rgba(229,57,53,0.4) 0, rgba(229,57,53,0.4) 4px, transparent 4px, transparent 8px);
+  flex:1;
+}
+
+/* ════════════════════════════════════════
+   SPLIT ARROWS (AppFlow → S3)
+════════════════════════════════════════ */
+.split-block { display:flex; align-items:center; flex-shrink:0; position:relative; width:100px; height:72px; }
+.split-spine { position:absolute; left:0; top:8px; bottom:8px; width:2px; background:#b0bfd4; border-radius:2px; }
+.split-branch { position:absolute; left:0; display:flex; align-items:center; }
+.split-hline  { height:2px; background:#b0bfd4; }
+.split-head   { width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:7px solid #b0bfd4; }
+.split-text   { font-size:9px;color:#6b7c99;font-family:'JetBrains Mono',monospace;margin-left:4px;white-space:nowrap; }
+
+/* ── SECTION BANDS ── */
+.section-bands { display:flex; justify-content:center; gap:4px; margin-top:32px; position:relative; z-index:1; }
+.section-band { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.section-band-line { height:3px; border-radius:2px; width:100%; }
+.section-band-label { font-size:10px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; text-align:center; padding:0 8px; }
+
+/* ── LEGEND ── */
+.legend { display:flex; gap:20px; justify-content:center; flex-wrap:wrap; margin-top:28px; }
+.legend-item { display:flex; align-items:center; gap:7px; font-size:11px; color:#4d6080; font-weight:500; }
+.legend-dot { width:11px; height:11px; border-radius:3px; flex-shrink:0; }
+
+/* ── S3 SYSTEM OF RECORD badge ── */
+.s3-sor-badge {
+  position:absolute; top:-12px; left:50%; transform:translateX(-50%);
+  background:#1b5e20; color:#fff; font-family:'JetBrains Mono',monospace;
+  font-size:8px; font-weight:600; letter-spacing:0.5px; padding:2px 8px; border-radius:10px;
+  white-space:nowrap; z-index:10;
+}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>IPRE — Production Architecture</h1>
+  <p>Materialized Recommendation Platform with Online Retrieval API · Offline Training Plane + Online Serving Plane</p>
+  <div class="review-badge">
+    ✓ Enterprise ARB Review Corrections Applied · 3 Architectural Fixes · Observability Layer · Plane Separation
+  </div>
+</div>
+
+<div class="canvas">
+
+<!-- ════════════════════════════════════════════════════════
+     CLOUDWATCH OBSERVABILITY PANEL (right sidebar)
+════════════════════════════════════════════════════════ -->
+<div style="position:relative">
+<div class="cw-panel">
+  <div class="cw-title">
+    <div class="icon-box box-cw" style="width:28px;height:28px;border-radius:7px;flex-shrink:0">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="white"/>
+      </svg>
+    </div>
+    CloudWatch Observability
+  </div>
+
+  <div class="cw-section">
+    <div class="cw-section-label">Pipeline Monitoring</div>
+    <div class="cw-metric">Step execution failures &amp; retries</div>
+    <div class="cw-metric">Processing job logs (stdout/stderr)</div>
+    <div class="cw-metric">Pipeline run status (Succeeded/Failed)</div>
+    <div class="cw-metric">Step duration &amp; instance utilization</div>
+  </div>
+
+  <div class="cw-section">
+    <div class="cw-section-label">Endpoint Monitoring</div>
+    <div class="cw-metric">Invocation count &amp; latency (p50/p99)</div>
+    <div class="cw-metric">4xx / 5xx error rates</div>
+    <div class="cw-metric">Model data freshness (last deploy age)</div>
+    <div class="cw-metric">Recommendation coverage %</div>
+  </div>
+
+  <div class="cw-section">
+    <div class="cw-section-label">Lambda / API Monitoring</div>
+    <div class="cw-metric">Lambda error rate &amp; duration</div>
+    <div class="cw-metric">Malformed / unknown customer_id</div>
+    <div class="cw-metric">API GW 4xx / throttles</div>
+    <div class="cw-metric">Salesforce call failures</div>
+  </div>
+
+  <div class="cw-section" style="margin-bottom:0">
+    <div class="cw-section-label">Business Metrics</div>
+    <div class="cw-metric">Feedback acceptance rate</div>
+    <div class="cw-metric">Association coverage % per run</div>
+    <div class="cw-metric">Threshold drift via feedback_summary.json</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     ─── OFFLINE TRAINING PLANE ───
+════════════════════════════════════════════════════════ -->
+<div class="plane-header" style="margin-top:0">
+  <div class="plane-pill offline">
+    <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#00897b"/></svg>
+    Offline Training Plane
+  </div>
+  <div class="plane-desc">Batch · Scheduled · No user-facing latency requirements</div>
+</div>
+
+<!-- TOP ROW: Salesforce → AppFlow → S3 Lake → EventBridge/Lambda → Pipeline -->
+<div class="top-row" style="margin-bottom:4px">
+
+  <!-- Salesforce -->
+  <div class="node">
+    <div class="icon-box box-sf sz72">
+      <svg viewBox="0 0 52 52" width="40" height="40" fill="none">
+        <ellipse cx="26" cy="30" rx="18" ry="13" fill="white" opacity="0.95"/>
+        <ellipse cx="18" cy="27" rx="10" ry="8" fill="white" opacity="0.95"/>
+        <ellipse cx="34" cy="24" rx="11" ry="9" fill="white" opacity="0.95"/>
+        <ellipse cx="26" cy="20" rx="9" ry="7" fill="white" opacity="0.95"/>
+        <text x="14" y="35" font-size="14" font-weight="900" fill="#0070c0" font-family="Arial">SF</text>
+      </svg>
+    </div>
+    <div class="node-label">Salesforce<br>Data Objects</div>
+    <div class="node-sublabel">Source System</div>
+    <div class="tip">Customer, Product, Invoice<br>objects from Sales Cloud CRM</div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:-20px">
+    <div class="arrow-h" style="width:24px"></div>
+  </div>
+
+  <!-- AppFlow -->
+  <div class="node">
+    <div class="icon-box box-appflow sz72">
+      <svg viewBox="0 0 52 52" width="40" height="40" fill="none">
+        <path d="M18 20 L26 14 L34 20" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M34 32 L26 38 L18 32" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <line x1="26" y1="14" x2="26" y2="38" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="node-label">AWS AppFlow</div>
+    <div class="node-sublabel">Managed ETL</div>
+    <div class="tip">Scheduled sync · Handles auth<br>Salesforce pagination → CSV<br>Writes to S3 raw/ prefix</div>
+  </div>
+
+  <!-- Split arrows: Customers / Products / Invoices -->
+  <div class="split-block" style="margin-top:-20px">
+    <div class="split-spine"></div>
+    <div class="split-branch" style="top:8px">
+      <div class="split-hline" style="width:38px"></div>
+      <div class="split-head"></div>
+      <span class="split-text">Customers</span>
+    </div>
+    <div class="split-branch" style="top:50%;transform:translateY(-50%)">
+      <div class="split-hline" style="width:38px"></div>
+      <div class="split-head"></div>
+      <span class="split-text">Products</span>
+    </div>
+    <div class="split-branch" style="bottom:8px">
+      <div class="split-hline" style="width:38px"></div>
+      <div class="split-head"></div>
+      <span class="split-text">Invoices</span>
+    </div>
+  </div>
+
+  <!-- S3 Data Lake — System of Record -->
+  <div class="node" style="position:relative">
+    <div style="position:relative">
+      <div class="s3-sor-badge">System of Record</div>
+      <div class="icon-box box-s3lake sz80">
+        <svg viewBox="0 0 52 52" width="46" height="46" fill="none">
+          <ellipse cx="26" cy="13" rx="16" ry="7" fill="white" opacity="0.9"/>
+          <path d="M10 13 L10 39 Q10 46 26 46 Q42 46 42 39 L42 13" fill="white" opacity="0.12" stroke="white" stroke-width="2"/>
+          <path d="M10 13 Q10 20 26 20 Q42 20 42 13" fill="white" opacity="0.4"/>
+          <text x="12" y="37" font-size="11" font-weight="700" fill="white" font-family="Arial">Lake</text>
+        </svg>
+      </div>
+    </div>
+    <div class="node-label">AWS S3</div>
+    <div class="node-sublabel">Data Lake · ML SoR</div>
+    <div class="tip">Feature Store + Training Dataset<br>+ Inference Dataset<br>s3://ipre-prod-poc/<br>raw/ · intermediate/ · final/</div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:-20px">
+    <div class="arrow-h" style="width:24px"></div>
+  </div>
+
+  <!-- EventBridge + Lambda Trigger -->
+  <div class="node">
+    <div class="icon-box box-eb sz72">
+      <svg viewBox="0 0 52 52" width="40" height="40" fill="none">
+        <rect x="10" y="16" width="32" height="20" rx="5" fill="white" opacity="0.15" stroke="white" stroke-width="1.5"/>
+        <path d="M18 26 L24 20 L30 26 L24 32 Z" fill="white" opacity="0.85"/>
+        <circle cx="38" cy="17" r="4" fill="white" opacity="0.9"/>
+      </svg>
+    </div>
+    <div class="node-label">EventBridge<br>+ Lambda</div>
+    <div class="node-sublabel">Pipeline Trigger</div>
+    <div class="tip">EventBridge rule: cron or S3 event<br>Lambda calls StartPipelineExecution<br>Injects all 32 ParameterStrings</div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:-20px">
+    <div class="arrow-h" style="width:24px"></div>
+  </div>
+
+  <!-- SageMaker Pipeline -->
+  <div class="node">
+    <div class="icon-box box-proc sz80">
+      <svg viewBox="0 0 52 52" width="46" height="46" fill="none">
+        <rect x="8" y="8" width="36" height="36" rx="8" stroke="white" stroke-width="2" fill="none" opacity="0.3"/>
+        <rect x="13" y="13" width="11" height="11" rx="3" fill="white" opacity="0.85"/>
+        <rect x="28" y="13" width="11" height="11" rx="3" fill="white" opacity="0.5"/>
+        <rect x="13" y="28" width="11" height="11" rx="3" fill="white" opacity="0.5"/>
+        <rect x="28" y="28" width="11" height="11" rx="3" fill="white" opacity="0.85"/>
+        <line x1="24" y1="18" x2="28" y2="18" stroke="white" stroke-width="1.5"/>
+        <line x1="18" y1="24" x2="18" y2="28" stroke="white" stroke-width="1.5"/>
+        <line x1="34" y1="24" x2="34" y2="28" stroke="white" stroke-width="1.5"/>
+        <line x1="24" y1="34" x2="28" y2="34" stroke="white" stroke-width="1.5"/>
+      </svg>
+    </div>
+    <div class="node-label">SageMaker<br>Pipeline</div>
+    <div class="node-sublabel">ipre-prod-poc</div>
+    <div class="tip">6-step DAG · 32 ParameterStrings<br>Steps declared with dependencies<br>Training + Processing containers</div>
+  </div>
+
+</div><!-- /top-row -->
+
+<!-- ════ PIPELINE STEP ROWS ════ -->
+<div class="pipeline-area">
+
+  <!-- down arrow -->
+  <div class="step-connector">
+    <div class="step-connector-inner">
+      <div class="arrow-v down" style="height:22px"></div>
+    </div>
+  </div>
+
+  <!-- ──── STEP 1 ──── -->
+  <div class="step-row">
+    <div class="col-left">
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a8c7;text-align:right;margin-bottom:2px">INPUTS · S3 raw/</div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">🗂️</span><span class="artifact-name">customer.csv</span></div>
+          <span class="artifact-tag tag-raw">raw/customers/</span>
+          <div class="artifact-cols"><div class="artifact-col-item">customer_id · region · end_use</div></div>
+        </div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">📦</span><span class="artifact-name">product.csv</span></div>
+          <span class="artifact-tag tag-raw">raw/products/</span>
+          <div class="artifact-cols">
+            <div class="artifact-col-item">product_id · brand · l2/l3</div>
+            <div class="artifact-col-item">functionality · in_stock</div>
+          </div>
+        </div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">🧾</span><span class="artifact-name">invoice.csv</span></div>
+          <span class="artifact-tag tag-raw">raw/invoices/</span>
+          <div class="artifact-cols">
+            <div class="artifact-col-item">invoice_id · customer_id</div>
+            <div class="artifact-col-item">product_id · date · qty</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-centre">
+      <div class="step-card">
+        <div class="accent" style="background:#00897b"></div>
+        <div class="step-instance">ml.t3.xlarge</div>
+        <div class="step-card-header">
+          <div class="step-num" style="background:#00897b">1</div>
+          <div class="step-info">
+            <div class="step-title">Market Basket Creation</div>
+            <div class="step-script">market_basket.py · Processing Job</div>
+          </div>
+          <span class="step-badge badge-proc">Processing</span>
+        </div>
+        <div class="step-ops">
+          <div class="op-chip"><strong>3-Way Join</strong>invoices ← products ← customers on foreign keys</div>
+          <div class="op-chip"><strong>Recency Filter</strong>Drop invoices older than 730d. Min orders ≥ 1.</div>
+          <div class="op-chip"><strong>Segment</strong>region + "_" + end_use → 52 distinct segments</div>
+          <div class="op-chip"><strong>Aggregate</strong>purchase_freq, total_qty, total_spend per cust × product</div>
+          <div class="op-chip"><strong>RFM Scores</strong>recency / frequency / monetary → normalised [0,1]</div>
+          <div class="op-chip"><strong>Price Band</strong>Low/Mid/High tertile per segment (if unit_price exists)</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr2"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-right">
+      <div class="artifact" style="max-width:190px">
+        <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">market_basket.csv</span></div>
+        <span class="artifact-tag tag-int">intermediate/</span>
+        <div class="artifact-cols">
+          <div class="artifact-col-item">customer_id · segment · product_id</div>
+          <div class="artifact-col-item">l2/l3_category · in_stock · brand</div>
+          <div class="artifact-col-item">rfm_recency/freq/monetary_score</div>
+          <div class="artifact-col-item">purchase_freq · recency_days</div>
+          <div class="artifact-col-item" style="color:#00897b;font-weight:600">→ Steps 2, 3, 4</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-connector">
+    <div class="step-connector-inner">
+      <div class="arrow-v down" style="height:16px"></div>
+      <div class="connector-label">customer × product feature table</div>
+      <div class="arrow-v down" style="height:16px"></div>
+    </div>
+  </div>
+
+  <!-- ──── STEP 2 ──── -->
+  <div class="step-row">
+    <div class="col-left">
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a8c7;text-align:right;margin-bottom:2px">INPUT</div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">market_basket.csv</span></div>
+          <span class="artifact-tag tag-int">intermediate/</span>
+          <div class="artifact-cols">
+            <div class="artifact-col-item">501 customers · 19 columns</div>
+            <div class="artifact-col-item">RFM + category features</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-centre">
+      <div class="step-card">
+        <div class="accent" style="background:#5c6bc0"></div>
+        <div class="step-instance">ml.m5.xlarge</div>
+        <div class="step-card-header">
+          <div class="step-num" style="background:#5c6bc0">2</div>
+          <div class="step-info">
+            <div class="step-title">Customer Clustering</div>
+            <div class="step-script">train_clustering.py · Training Job</div>
+          </div>
+          <span class="step-badge badge-train">Training</span>
+        </div>
+        <div class="step-ops">
+          <div class="op-chip"><strong>Feature Matrix</strong>L2 proportions + brand + functionality + RFM. StandardScaler applied. Zero-variance cols removed.</div>
+          <div class="op-chip"><strong>Elbow Method</strong>KMeans k=2..MaxK(8). Stop when inertia drop &lt; ElbowThreshold(10%). Silhouette logged.</div>
+          <div class="op-chip"><strong>Per-Segment</strong>Runs independently per segment. Segs &lt; MinClusterCustomers(6) → k=1.</div>
+          <div class="op-chip"><strong>Result</strong>52 segments → up to 8 clusters. 118 clusters total. cluster_id = segment_k</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr2"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-right">
+      <div class="artifact" style="max-width:190px">
+        <div class="artifact-header"><span class="artifact-icon">📦</span><span class="artifact-name">model.tar.gz</span></div>
+        <span class="artifact-tag tag-int">model/ · cluster assignments</span>
+        <div class="artifact-cols">
+          <div class="artifact-col-item">customer_clusters.csv inside</div>
+          <div class="artifact-col-item">customer_id · cluster_id · segment</div>
+          <div class="artifact-col-item">118 clusters · 52 segments</div>
+          <div class="artifact-col-item" style="color:#5c6bc0;font-weight:600">→ Steps 3, 4</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-connector">
+    <div class="step-connector-inner">
+      <div class="arrow-v down" style="height:16px"></div>
+      <div class="connector-label">cluster assignments + market_basket</div>
+      <div class="arrow-v down" style="height:16px"></div>
+    </div>
+  </div>
+
+  <!-- ──── STEP 3 ──── -->
+  <div class="step-row">
+    <div class="col-left">
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a8c7;text-align:right;margin-bottom:2px">INPUTS</div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">market_basket.csv</span></div>
+          <span class="artifact-tag tag-int">intermediate/</span>
+        </div>
+        <div class="artifact" style="margin-top:4px">
+          <div class="artifact-header"><span class="artifact-icon">📦</span><span class="artifact-name">model.tar.gz</span></div>
+          <span class="artifact-tag tag-int">cluster assignments</span>
+        </div>
+        <div class="artifact" style="margin-top:4px">
+          <div class="artifact-header"><span class="artifact-icon">🧾</span><span class="artifact-name">invoice.csv</span></div>
+          <span class="artifact-tag tag-raw">raw/ · basket sessions</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-centre">
+      <div class="step-card">
+        <div class="accent" style="background:#00897b"></div>
+        <div class="step-instance">ml.m5.xlarge</div>
+        <div class="step-card-header">
+          <div class="step-num" style="background:#00897b">3</div>
+          <div class="step-info">
+            <div class="step-title">Association Rule Mining</div>
+            <div class="step-script">associations.py · Processing Job</div>
+          </div>
+          <span class="step-badge badge-proc">Processing</span>
+        </div>
+        <div class="step-ops">
+          <div class="op-chip"><strong>Basket Sessions</strong>WindowDays=0 → auto median gap, capped 7–90d. global_basket_id = cust_id + "_" + session</div>
+          <div class="op-chip"><strong>Time-Decay</strong>w = exp(−λ × age_days). λ=0.001 → half-life 693d.</div>
+          <div class="op-chip"><strong>Lift</strong>conf / P(B). Filters universally popular products. Min=1.2. Range observed: 1.33–31.0</div>
+          <div class="op-chip"><strong>Proportional Threshold</strong>min_freq = max(MinAbsFreq=2, 3% × cluster_baskets)</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr2"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-right">
+      <div class="artifact" style="max-width:190px">
+        <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">associations.csv</span></div>
+        <span class="artifact-tag tag-int">intermediate/</span>
+        <div class="artifact-cols">
+          <div class="artifact-col-item">segment · cluster_id</div>
+          <div class="artifact-col-item">product_a → product_b</div>
+          <div class="artifact-col-item">support · confidence · lift</div>
+          <div class="artifact-col-item">662 qualifying rules</div>
+          <div class="artifact-col-item" style="color:#00897b;font-weight:600">→ Step 4</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-connector">
+    <div class="step-connector-inner">
+      <div class="arrow-v down" style="height:16px"></div>
+      <div class="connector-label">rules + basket features + cluster assignments</div>
+      <div class="arrow-v down" style="height:16px"></div>
+    </div>
+  </div>
+
+  <!-- ──── STEP 4 ──── -->
+  <div class="step-row">
+    <div class="col-left">
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a8c7;text-align:right;margin-bottom:2px">INPUTS</div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">market_basket.csv</span></div>
+          <span class="artifact-tag tag-int">intermediate/</span>
+        </div>
+        <div class="artifact" style="margin-top:4px">
+          <div class="artifact-header"><span class="artifact-icon">📦</span><span class="artifact-name">model.tar.gz</span></div>
+          <span class="artifact-tag tag-int">cluster assignments</span>
+        </div>
+        <div class="artifact" style="margin-top:4px">
+          <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">associations.csv</span></div>
+          <span class="artifact-tag tag-int">662 rules</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-centre">
+      <div class="step-card">
+        <div class="accent" style="background:#1a6bff"></div>
+        <div class="step-instance">ml.m5.large</div>
+        <div class="step-card-header">
+          <div class="step-num" style="background:#1a6bff">4</div>
+          <div class="step-info">
+            <div class="step-title">Ranking &amp; Scoring</div>
+            <div class="step-script">ranking.py · Processing Job</div>
+          </div>
+          <span class="step-badge badge-proc">Processing</span>
+        </div>
+        <div class="step-ops">
+          <div class="op-chip"><strong>Filter</strong>product_a ∈ history, product_b ∉ history, in_stock, support≥0.01, conf≥0.05, lift≥1.2</div>
+          <div class="op-chip"><strong>Score</strong>0.45×conf + 0.20×supp + 0.20×lift_norm + 0.15×recency</div>
+          <div class="op-chip"><strong>L3 Tiebreak</strong>+0.02 × customer L3 affinity proportion bonus</div>
+          <div class="op-chip"><strong>Fallback</strong>Category-aware: 0.1 + customer L2 proportion. Not popularity.</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr2"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-right">
+      <div class="artifact" style="max-width:190px">
+        <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">recommendations (interim)</span></div>
+        <span class="artifact-tag tag-int">2,342 rows · 477 customers</span>
+        <div class="artifact-cols">
+          <div class="artifact-col-item">trigger_product / "fallback"</div>
+          <div class="artifact-col-item">confidence · lift · score</div>
+          <div class="artifact-col-item">l2/l3_category · rank</div>
+          <div class="artifact-col-item" style="color:#1a6bff;font-weight:600">→ Step 5</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-connector">
+    <div class="step-connector-inner">
+      <div class="arrow-v down" style="height:16px"></div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="connector-label">interim recommendations</div>
+        <div style="font-size:10px;color:#b0bfd4">+</div>
+        <div class="artifact" style="min-width:120px;max-width:150px;border-color:rgba(229,57,53,0.3)">
+          <div class="artifact-header"><span class="artifact-icon">💬</span><span class="artifact-name" style="color:#ad1457">feedback.csv</span></div>
+          <span class="artifact-tag" style="background:rgba(255,61,113,0.1);color:#ad1457">optional · last 365d</span>
+          <div class="artifact-cols"><div class="artifact-col-item">sentiment H/M/L or reason_code</div></div>
+        </div>
+      </div>
+      <div class="arrow-v down" style="height:16px"></div>
+    </div>
+  </div>
+
+  <!-- ──── STEP 5 ──── -->
+  <div class="step-row">
+    <div class="col-left">
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a8c7;text-align:right;margin-bottom:2px">INPUTS</div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">🗃️</span><span class="artifact-name">recommendations (interim)</span></div>
+          <span class="artifact-tag tag-int">2,342 rows</span>
+        </div>
+        <div class="artifact" style="margin-top:4px;border-color:rgba(255,61,113,0.3)">
+          <div class="artifact-header"><span class="artifact-icon">💬</span><span class="artifact-name" style="color:#ad1457">feedback.csv</span></div>
+          <span class="artifact-tag" style="background:rgba(255,61,113,0.1);color:#ad1457">optional → skip if absent</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-centre">
+      <div class="step-card">
+        <div class="accent" style="background:#e91e8c"></div>
+        <div class="step-instance">ml.t3.xlarge</div>
+        <div class="step-card-header">
+          <div class="step-num" style="background:#e91e8c">5</div>
+          <div class="step-info">
+            <div class="step-title">Feedback Calibration</div>
+            <div class="step-script">feedback.py · Processing Job</div>
+          </div>
+          <span class="step-badge badge-proc">Processing</span>
+        </div>
+        <div class="step-ops">
+          <div class="op-chip"><strong>Reason Inference</strong>good_fit/sold→High · not_relevant→Med− · not_interested→Low</div>
+          <div class="op-chip"><strong>Score Adjust</strong>High×1.3 · MedPos×1.0 · MedNeg×0.4 · Low×0.1</div>
+          <div class="op-chip"><strong>Cutoff</strong>Remove rows where adjusted_score &lt; 0.08</div>
+          <div class="op-chip"><strong>Summary JSON</strong>Acceptance rate by segment · L2 category · threshold suggestions</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr2"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-right">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="artifact" style="max-width:190px;border-color:rgba(46,125,50,0.4)">
+          <div class="artifact-header"><span class="artifact-icon">✅</span><span class="artifact-name">recommendations.csv</span></div>
+          <span class="artifact-tag tag-final">final/ · 477 customers</span>
+          <div class="artifact-cols">
+            <div class="artifact-col-item">14 output columns · 830 scores</div>
+            <div class="artifact-col-item">Lift 1.33–31.0 · 90 L3 cats</div>
+            <div class="artifact-col-item" style="color:#2e7d32;font-weight:600">→ Materialised Dataset</div>
+          </div>
+        </div>
+        <div class="artifact" style="max-width:190px;border-color:rgba(229,57,53,0.3)">
+          <div class="artifact-header"><span class="artifact-icon">📊</span><span class="artifact-name">feedback_summary.json</span></div>
+          <span class="artifact-tag" style="background:rgba(255,61,113,0.1);color:#ad1457">feedback/</span>
+          <div class="artifact-cols"><div class="artifact-col-item">threshold suggestions for next run</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-connector">
+    <div class="step-connector-inner">
+      <div class="arrow-v down" style="height:16px"></div>
+      <div class="connector-label">ConditionStep: ModelApprovalStatus = Approved</div>
+      <div class="arrow-v down" style="height:16px"></div>
+    </div>
+  </div>
+
+  <!-- ──── STEP 6 ──── -->
+  <div class="step-row">
+    <div class="col-left">
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:#94a8c7;text-align:right;margin-bottom:2px">INPUT</div>
+        <div class="artifact">
+          <div class="artifact-header"><span class="artifact-icon">✅</span><span class="artifact-name">recommendations.csv</span></div>
+          <span class="artifact-tag tag-final">final/</span>
+          <div class="artifact-cols">
+            <div class="artifact-col-item">Model Approval Gate</div>
+            <div class="artifact-col-item">Condition = Approved</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-centre">
+      <div class="step-card">
+        <div class="accent" style="background:#0288d1"></div>
+        <div class="step-instance">pipeline.py</div>
+        <div class="step-card-header">
+          <div class="step-num" style="background:#0288d1">6</div>
+          <div class="step-info">
+            <div class="step-title">Package &amp; Register Artifact</div>
+            <div class="step-script">RegisterModel · pipeline.py</div>
+          </div>
+          <span class="step-badge badge-ep">Registry</span>
+        </div>
+        <div class="step-ops">
+          <div class="op-chip"><strong>What is Registered</strong>NOT a KMeans model artifact. Versioned package = recommendations.csv + sklearn inference handler (lookup container)</div>
+          <div class="op-chip"><strong>Model Registry</strong>ipre-prod-poc-model-group. Versioned. Approval workflow. Rollback by approving previous version.</div>
+          <div class="op-chip"><strong>KMeans Note</strong>KMeans model ran offline only. It is NOT deployed or invoked at request time. Runtime = pure lookup.</div>
+          <div class="op-chip"><strong>Deploy Trigger</strong>On approval → triggers serving plane refresh (see below). Previous endpoint remains live during swap.</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-arr2"><div class="arrow-h" style="width:40px"></div></div>
+    <div class="col-right">
+      <div class="artifact" style="max-width:190px;border-color:rgba(2,136,209,0.4)">
+        <div class="artifact-header"><span class="artifact-icon">📋</span><span class="artifact-name">Model Package</span></div>
+        <span class="artifact-tag tag-store">ipre-prod-poc-model-group</span>
+        <div class="artifact-cols">
+          <div class="artifact-col-item">recommendations.csv</div>
+          <div class="artifact-col-item">+ sklearn lookup handler</div>
+          <div class="artifact-col-item">versioned · approval workflow</div>
+          <div class="artifact-col-item" style="color:#01579b;font-weight:600">→ Deploy to Serving Plane</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline-area -->
+
+<!-- ════════════════════════════════════════════════════════
+     DEPLOYMENT BRIDGE (key architectural fix #1)
+════════════════════════════════════════════════════════ -->
+<div class="deploy-bridge">
+  <div style="flex:1;height:2px;background:repeating-linear-gradient(to right,rgba(26,107,255,0.2) 0,rgba(26,107,255,0.2) 8px,transparent 8px,transparent 16px)"></div>
+  <div class="deploy-arrow-box">
+    <div class="arrow-v deploy down" style="height:18px"></div>
+    <div class="deploy-badge">
+      📦 DEPLOYMENT EVENT — not dataflow<br>
+      <span style="font-size:8px;color:#6b7c99">Registered artifact → refreshes serving store<br>Offline and Online planes are independent</span>
+    </div>
+    <div class="arrow-v deploy down" style="height:18px"></div>
+  </div>
+  <div style="flex:1;height:2px;background:repeating-linear-gradient(to right,rgba(26,107,255,0.2) 0,rgba(26,107,255,0.2) 8px,transparent 8px,transparent 16px)"></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════
+     ─── ONLINE SERVING PLANE ───
+════════════════════════════════════════════════════════ -->
+<div class="plane-header" style="margin-top:0">
+  <div class="plane-pill online">
+    <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#1a6bff"/></svg>
+    Online Serving Plane
+  </div>
+  <div class="plane-desc">Stateless · Low-latency · customer_id lookup only · Model runs OFFLINE — not here</div>
+</div>
+
+<div class="serving-row" style="justify-content:center;gap:0;margin-top:8px">
+
+  <!-- Serving Store (endpoint as materialized store) -->
+  <div style="display:flex;flex-direction:column;align-items:center">
+    <div class="serving-store">
+      <div class="accent" style="background:#0288d1;top:10px;bottom:10px;left:0;width:4px;border-radius:4px;position:absolute"></div>
+      <div class="serving-store-title">
+        <div class="icon-box box-serving" style="width:32px;height:32px;border-radius:9px">
+          <svg viewBox="0 0 52 52" width="20" height="20" fill="none">
+            <rect x="8" y="14" width="36" height="26" rx="5" stroke="white" stroke-width="2" fill="none"/>
+            <line x1="8" y1="22" x2="44" y2="22" stroke="white" stroke-width="1.5"/>
+            <line x1="20" y1="22" x2="20" y2="40" stroke="white" stroke-width="1.2" opacity="0.6"/>
+          </svg>
+        </div>
+        Materialised Recommendation Store
+      </div>
+      <div class="serving-store-sub">ipre-prod-poc-endpoint · sklearn lookup container</div>
+      <div class="serving-ops">
+        <div class="serving-op"><strong>Runtime behaviour:</strong> customer_id → index lookup into recommendations.csv. No ML model runs at request time.</div>
+        <div class="serving-op"><strong>Not an ML endpoint:</strong> equivalent to DynamoDB GetItem or ElasticSearch query, not model.predict()</div>
+        <div class="serving-op"><strong>Data freshness:</strong> stale until next pipeline deployment. Each run refreshes the materialized dataset.</div>
+        <div class="serving-op"><strong>Response:</strong> top-5 recommendations JSON with score, reason, lift, l2/l3 category, rank</div>
+      </div>
+    </div>
+    <div style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#0288d1;text-align:center;margin-top:6px;font-weight:600">
+      ← refreshed on each pipeline deployment
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:-40px">
+    <div class="arrow-h both" style="width:28px"></div>
+  </div>
+
+  <!-- Lambda Application Service Layer -->
+  <div class="app-service-card">
+    <div class="accent" style="background:#ff9800;top:10px;bottom:10px;left:0;width:4px;border-radius:4px;position:absolute"></div>
+    <div class="app-service-title">
+      <div class="icon-box box-lambda" style="width:32px;height:32px;border-radius:9px">
+        <svg viewBox="0 0 52 52" width="20" height="20" fill="none">
+          <text x="10" y="36" font-size="26" font-weight="700" fill="white" font-family="serif">λ</text>
+        </svg>
+      </div>
+      Application Service Layer
+    </div>
+    <div class="app-service-sub">Lambda · NOT a glue script — production service</div>
+    <div class="app-service-ops">
+      <div class="app-service-op"><strong>Responsibility 1 — Input Validation:</strong> validate customer_id exists, reject unknowns with 400</div>
+      <div class="app-service-op"><strong>Responsibility 2 — Security Boundary:</strong> Salesforce never calls SageMaker directly. Lambda is the only entry point.</div>
+      <div class="app-service-op"><strong>Responsibility 3 — API Contract:</strong> shapes response to Salesforce Einstein schema. Handles nulls, empty results, retries.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:-40px">
+    <div class="arrow-h both" style="width:28px"></div>
+  </div>
+
+  <!-- API Gateway -->
+  <div class="node" style="margin-top:-40px">
+    <div class="icon-box box-apigw sz72">
+      <svg viewBox="0 0 52 52" width="40" height="40" fill="none">
+        <rect x="12" y="14" width="28" height="24" rx="4" fill="white" opacity="0.15" stroke="white" stroke-width="1.5"/>
+        <text x="14" y="30" font-size="14" font-weight="700" fill="white" font-family="'JetBrains Mono',monospace">&lt;/&gt;</text>
+      </svg>
+    </div>
+    <div class="node-label">API Gateway</div>
+    <div class="node-sublabel">REST API</div>
+    <div class="tip">POST /recommendations/{id}<br>Named Credential for Salesforce<br>Auth · Throttling · CORS</div>
+  </div>
+
+  <div style="display:flex;align-items:center;margin-top:-60px">
+    <div class="arrow-h both" style="width:28px"></div>
+  </div>
+
+  <!-- Salesforce Data Cloud -->
+  <div class="node" style="margin-top:-60px">
+    <div class="icon-box box-sf sz80">
+      <svg viewBox="0 0 52 52" width="46" height="46" fill="none">
+        <ellipse cx="26" cy="30" rx="18" ry="13" fill="white" opacity="0.95"/>
+        <ellipse cx="18" cy="27" rx="10" ry="8" fill="white" opacity="0.95"/>
+        <ellipse cx="34" cy="24" rx="11" ry="9" fill="white" opacity="0.95"/>
+        <ellipse cx="26" cy="20" rx="9" ry="7" fill="white" opacity="0.95"/>
+        <text x="14" y="35" font-size="14" font-weight="900" fill="#0070c0" font-family="Arial">SF</text>
+      </svg>
+    </div>
+    <div class="node-label">Salesforce<br>Data Cloud</div>
+    <div class="node-sublabel">Predictive Jobs</div>
+    <div class="tip">Einstein Co-Pilot action<br>Named Credential → API GW<br>Account/Opportunity view</div>
+  </div>
+
+</div><!-- /serving-row -->
+
+</div><!-- /relative wrapper -->
+
+<!-- SECTION BANDS -->
+<div class="section-bands" style="margin-top:36px;gap:4px">
+  <div class="section-band" style="width:110px">
+    <div class="section-band-line" style="background:#00a1e0"></div>
+    <div class="section-band-label" style="color:#0070c0">Salesforce CRM</div>
+  </div>
+  <div style="width:5px"></div>
+  <div class="section-band" style="width:110px">
+    <div class="section-band-line" style="background:#e91e8c"></div>
+    <div class="section-band-label" style="color:#c0175a">AppFlow ETL</div>
+  </div>
+  <div style="width:5px"></div>
+  <div class="section-band" style="width:110px">
+    <div class="section-band-line" style="background:#1b5e20"></div>
+    <div class="section-band-label" style="color:#1b5e20">S3 Data Lake</div>
+  </div>
+  <div style="width:5px"></div>
+  <div class="section-band" style="width:110px">
+    <div class="section-band-line" style="background:#e91e8c"></div>
+    <div class="section-band-label" style="color:#c0175a">Trigger Layer</div>
+  </div>
+  <div style="width:5px"></div>
+  <div class="section-band" style="width:440px">
+    <div class="section-band-line" style="background:linear-gradient(to right,#00897b,#5c6bc0,#00897b,#1a6bff,#e91e8c,#0288d1)"></div>
+    <div class="section-band-label" style="color:#00695c">Offline Training Plane · SageMaker Pipeline Steps 1–6</div>
+  </div>
+  <div style="width:5px"></div>
+  <div class="section-band" style="width:420px">
+    <div class="section-band-line" style="background:linear-gradient(to right,#0288d1,#ff9800,#e91e8c,#00a1e0)"></div>
+    <div class="section-band-label" style="color:#01579b">Online Serving Plane · Lookup · App Service · API</div>
+  </div>
+</div>
+
+</div><!-- /canvas -->
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#00a1e0"></div>Salesforce</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e91e8c"></div>AppFlow / EventBridge / API Gateway</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#1b5e20"></div>S3 — Data Lake / System of Record</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f4a200"></div>S3 — Intermediate Artifacts</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#00897b"></div>SageMaker Processing</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#5c6bc0"></div>SageMaker Training (KMeans)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#0288d1"></div>Serving Store (Materialized)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ff9800"></div>Lambda — Application Service Layer</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e53935"></div>CloudWatch Observability</div>
+  <div class="legend-item">
+    <svg width="28" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#1a6bff" stroke-width="2.5"/><polygon points="20,1 24,4 20,7" fill="#1a6bff"/></svg>
+    Deployment Event (not dataflow)
+  </div>
+</div>
+
+</body>
+</html>
